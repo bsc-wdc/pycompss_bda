@@ -1,5 +1,6 @@
 import numpy as np
 
+from time import time
 from mpi4py import MPI
 
 from numpy import random as rng
@@ -15,24 +16,20 @@ def parse_arguments():
     a help message in case of wrong usage.
     """
     import argparse
-    parser = argparse.ArgumentParser(description='A COMPSs-Redis Kmeans implementation.')
+    parser = argparse.ArgumentParser(description='An MPI Kmeans implementation.')
     parser.add_argument('-s', '--seed', type=int, default=0,
                         help='Pseudo-random seed. Default = 0'
                         )
-    parser.add_argument('-n', '--numpoints', type=int, default=100,
+    parser.add_argument('-n', '--num_points', type=int, default=100,
                         help='Number of points. Default = 100'
                         )
     parser.add_argument('-d', '--dimensions', type=int, default=2,
                         help='Number of dimensions. Default = 2'
                         )
-    parser.add_argument('-c', '--centers', type=int, default=2,
+    parser.add_argument('-c', '--num_centers', type=int, default=2,
                         help='Number of centers'
                         )
-    parser.add_argument('-m', '--mode', type=str, default='uniform',
-                        choices=['uniform', 'normal'],
-                        help='Distribution of points. Default = uniform'
-                        )
-    parser.add_argument('-i', '--iterations', type=int, default=20,
+    parser.add_argument('-i', '--max_iterations', type=int, default=20,
                         help='Maximum number of iterations'
                         )
     parser.add_argument('-e', '--epsilon', type=float, default=1e-9,
@@ -40,9 +37,6 @@ def parse_arguments():
                         )
     parser.add_argument('-l', '--lnorm', type=int, default=2, choices=[1, 2],
                         help='Norm for vectors'
-                        )
-    parser.add_argument('--plot_result', action='store_true',
-                        help='Plot the resulting clustering (only works if dim = 2).'
                         )
 
     return parser.parse_args()
@@ -92,28 +86,47 @@ def _scatter_samples(X):
 
     return split_X
 
+
 def root_print(msg):
     if rank == 0:
         print(msg)
 
-def plot(mat, labels, centers):
-    import matplotlib.pyplot as plt
-    plt.figure('Clustering')
 
-    def color_wheel(i):
-        l = ['red', 'purple', 'blue', 'cyan', 'green']
-        return l[i % len(l)]
+def init_board_random(numV, dim, seed):
+    np.random.seed(seed)
+    return np.random.random((numV, dim))
 
-    idx = 0
-    for (i, p) in enumerate(mat):
-        col = color_wheel(labels[idx])
-        plt.scatter(p[0], p[1], color=col)
-        idx += 1
-    for centre in centers:
-        plt.scatter(centre[0], centre[1], color='black')
-    import uuid
-    # plt.show()
-    plt.savefig('%s.png' % str(uuid.uuid4()))
+
+def has_converged(mu, oldmu, epsilon, iter, maxIterations):
+    print("iter: " + str(iter))
+    print("maxIterations: " + str(maxIterations))
+    if oldmu != []:
+        if iter < maxIterations:
+            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
+            distancia = sum(aux)
+            if distancia < epsilon * epsilon:
+                print("Distancia_T: " + str(distancia))
+                return True
+            else:
+                print("Distancia_F: " + str(distancia))
+                return False
+        else:
+            # max number of iterations reached
+            return True
+
+
+def init_matrix(num_points, dimensions, seed):
+    if rank == 0:
+
+        rng.seed(seed)
+
+        matrix = init_board_random(num_points, dimensions, seed)
+    else:
+        matrix = None
+
+    matrix = _scatter_samples(matrix)
+
+    return matrix
 
 
 def cluster_and_partial_sums(fragment, centers, norm):
@@ -136,33 +149,23 @@ def cluster_and_partial_sums(fragment, centers, norm):
     return partial_results, labels
 
 
-def main():
-    args = parse_arguments()
-
-    from time import time
-
+def kmeans_mpi(matrix, dimensions, num_centers, max_iterations, seed, epsilon, norm):
     if rank == 0:
-        print("Execution arguments:\n%s" % args)
-        t0 = time()
+        rng.seed(seed)
 
-        rng.seed(args.seed)
-
-        matrix = np.random.random((args.numpoints, args.dimensions))
-        centers = np.array([np.random.random(args.dimensions) for _ in range(args.centers)])
+        centers = np.array([np.random.random(dimensions) for _ in range(num_centers)])
     else:
-        matrix = None
-        centers = np.zeros((args.centers, args.dimensions))
+        centers = np.zeros((num_centers, dimensions))
 
     matrix = _scatter_samples(matrix)
 
-    norm = args.lnorm
-    epsilon = args.epsilon
-
+    epsilon = epsilon
     comm.Bcast(centers, root=0)
 
-    for i in range(args.iterations):
+    for it in range(max_iterations):
 
-        root_print("Iteration: %s" % i)
+        root_print("Iteration: %s" % it)
+
         partial_results, labels = cluster_and_partial_sums(matrix, centers, norm)
         new_centers = np.array(np.zeros(centers.shape))
 
@@ -176,21 +179,40 @@ def main():
             # Convergence criterion is met
             labels = comm.gather(labels, root=0)
             matrix = comm.gather(matrix, root=0)
-            if rank == 0 and args.plot_result:
+
+            if rank == 0:
                 print("Convergence is met")
                 labels = [l for sl in labels for l in sl]
                 matrix = [l for sl in matrix for l in sl]
-
-                plot(matrix, labels, centers)
+                # not used but pyCOMPSs transfers this back so it's fair to do it also in MPI.
 
             break
-        else:
-            root_print("Not converged, proceeding to next iteration.")
+
         # Convergence criterion is not met, update centers
         centers = new_centers
+
+
+def main():
+    args = parse_arguments()
+
+    if rank == 0:
+        print("Execution arguments:\n%s" % args)
+        t0 = time()
+
+    matrix = init_matrix(args.num_points, dimensions=args.dimensions, seed=args.seed)
+
+    kmeans_mpi(matrix=matrix,
+               dimensions=args.dimensions,
+               num_centers=args.num_centers,
+               max_iterations=args.max_iterations,
+               seed=args.seed,
+               epsilon=args.epsilon,
+               norm=args.lnorm)
+
     if rank == 0:
         t1 = time()
         print("Total elapsed time: %s" % (t1 - t0))
+
 
 if __name__ == "__main__":
     main()

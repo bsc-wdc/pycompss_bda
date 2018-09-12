@@ -1,222 +1,174 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-#
-#  Copyright 2002-2015 Barcelona Supercomputing Center (www.bsc.es)
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-__author__ = 'Sandra Corella <sandra.corella@bsc.es>, Ramon Amela <ramon.amela@bsc.es>'
-__copyright__ = '2016 Barcelona Supercomputing Center (BSC-CNS)'
-
-from pycompss.api.task import task
-from pycompss.api.parameter import *
 import numpy as np
 
-
-@task(returns=dict)
-def mergeReduceTask(*data):
-    reduce_value = data[0]
-    for i in xrange(1, len(data)):
-        reduce_value = reduceCenters(reduce_value, data[i])
-    return reduce_value
+from time import time
+from pycompss.api.task import task
+from pycompss.api.parameter import *
 
 
-def mergeReduce(function, data, chunk=50):
-    """ Apply function cumulatively to the items of data,
-        from left to right in binary tree structure, so as to
-        reduce the data to a single value.
-    :param function: function to apply to reduce data
-    :param data: List of items to be reduced
-    :return: result of reduce the data to a single value
+
+
+def parse_arguments():
     """
-    while (len(data)) > 1:
-        dataToReduce = data[:chunk]
-        data = data[chunk:]
-        data.append(mergeReduceTask(*dataToReduce))
-    return data[0]
+    Parse command line arguments. Make the program generate
+    a help message in case of wrong usage.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description='A COMPSs Kmeans implementation.')
+    parser.add_argument('-s', '--seed', type=int, default=0,
+                        help='Pseudo-random seed. Default = 0'
+                        )
+    parser.add_argument('-n', '--num_points', type=int, default=100,
+                        help='Number of points. Default = 100'
+                        )
+    parser.add_argument('-d', '--dimensions', type=int, default=2,
+                        help='Number of dimensions. Default = 2'
+                        )
+    parser.add_argument('-c', '--num_centers', type=int, default=2,
+                        help='Number of centers'
+                        )
+    parser.add_argument('-i', '--max_iterations', type=int, default=20,
+                        help='Maximum number of iterations'
+                        )
+    parser.add_argument('-e', '--epsilon', type=float, default=1e-9,
+                        help='Epsilon. Kmeans will stop when |old - new| < epsilon.'
+                        )
+    parser.add_argument('-l', '--lnorm', type=int, default=2, choices=[1, 2],
+                        help='Norm for vectors'
+                        )
+    parser.add_argument('-f', '--num_fragments', type=int)
 
-
-def init_board_gauss(numV, dim, K, seed):
-    n = int(float(numV) / K)
-    data = []
-    np.random.seed(seed)
-    for k in range(K):
-        c = [np.random.uniform(-1, 1) for i in range(dim)]
-        s = np.random.uniform(0.05, 0.5)
-        for i in range(n):
-            d = np.array([np.random.normal(c[j], s) for j in range(dim)])
-            data.append(d)
-
-    Data = np.array(data)[:numV]
-    return Data
+    return parser.parse_args()
 
 
 def init_board_random(numV, dim, seed):
     np.random.seed(seed)
     return np.random.random((numV, dim))
-    # return [np.random.random(dim) for _ in range(numV)]
-
-
-def init_random(dim, k, seed):
-    np.random.seed(seed)
-    m = np.random.random((k, dim))
-    return m
-
-
-@task(returns=dict)
-def cluster_points_sum(XP, mu, ind):
-    """
-    For each point computes the nearest center.
-    :param XP: Fragments of points
-    :param mu: Centers
-    :param ind: point first index
-    :return: {mu_ind: [pointInd_i, ..., pointInd_n]}
-    """
-    dic = {}
-    for x in enumerate(XP):
-        bestmukey = min([(i[0], np.linalg.norm(x[1] - mu[i[0]]))
-                         for i in enumerate(mu)], key=lambda t: t[1])[0]
-        if bestmukey not in dic:
-            dic[bestmukey] = [x[0] + ind]
-        else:
-            dic[bestmukey].append(x[0] + ind)
-    return partial_sum(XP, dic, ind)
-
-
-def partial_sum(XP, clusters, ind):
-    """
-    For each cluster returns the number of points and the sum of all the
-    points that belong to the cluster.
-    :param XP: points
-    :param clusters: partial cluster {mu_ind: [pointInd_i, ..., pointInd_n]}
-    :param ind: point first ind
-    :return: {cluster_ind: (#points, sum(points))}
-    """
-    # XP = np.array(XP)
-    dic = {}
-    for i in clusters:
-        p_idx = np.array(clusters[i]) - ind
-        dic[i] = (len(p_idx), np.sum(XP[p_idx], axis=0))
-    return dic
-
-
-def reduceCenters(a, b):
-    """
-    Reduce method to sum the result of two partial_sum methods
-    :param a: partial_sum {cluster_ind: (#points_a, sum(points_a))}
-    :param b: partial_sum {cluster_ind: (#points_b, sum(points_b))}
-    :return: {cluster_ind: (#points_a+#points_b, sum(points_a+points_b))}
-    """
-    for key in b:
-        if key not in a:
-            a[key] = b[key]
-        else:
-            a[key] = (a[key][0] + b[key][0], a[key][1] + b[key][1])
-    return a
-
-
-def has_converged(mu, oldmu, epsilon, iter, maxIterations):
-    print("iter: " + str(iter))
-    print("maxIterations: " + str(maxIterations))
-    if oldmu != []:
-        if iter < maxIterations:
-            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
-            distancia = sum(aux)
-            if distancia < epsilon * epsilon:
-                print("Distancia_T: " + str(distancia))
-                return True
-            else:
-                print("Distancia_F: " + str(distancia))
-                return False
-        else:
-            # detencion pq se ha alcanzado el maximo de iteraciones
-            return True
 
 
 @task(returns=list)
-def genFragment(numv, dim, k, seed, mode="random"):
-    if mode == "gauss":
-        return init_board_gauss(numv, dim, k, seed)
-    else:
-        return init_board_random(numv, dim, seed)
+def generate_fragment(numv, dim, seed):
+    return init_board_random(numv, dim, seed)
 
 
-def partition_dataset(X, numFrag):
-    fragments = []
-    frag_size = int(len(X) / numFrag)
+@task(returns=1, labels=INOUT)
+def cluster_and_partial_sums(fragment, labels, centres, norm):
+    '''Given a fragment of points, declare a CxD matrix A and, for each point p:
+    1) Compute the nearest centre c of p
+    2) Add p / num_points_in_fragment to A[index(c)]
+    3) Set label[index(p)] = c
+    '''
+    ret = np.matrix(np.zeros(centres.shape))
+    n = fragment.shape[0]
+    c = centres.shape[0]
+    # Check if labels is an empty list
+    if not labels:
+        # If it is, fill it with n zeros.
+        for _ in range(n):
+            # Done this way to not lose the reference
+            labels.append(0)
+    # Compute the big stuff
+    associates = np.zeros(c)
+    # Get the labels for each point
+    for (i, point) in enumerate(fragment):
+        distances = np.zeros(c)
+        for (j, centre) in enumerate(centres):
+            distances[j] = np.linalg.norm(point - centre, norm)
+        labels[i] = np.argmin(distances)
+        associates[labels[i]] += 1
+    # Add each point to its associate centre
+    for (i, point) in enumerate(fragment):
+        ret[labels[i]] += point / associates[labels[i]]
+    return ret
 
-    for i in range(0, numFrag - 1):
-        start, end = i * frag_size, (i + 1) * frag_size
-        fragments.append(X[start:end, :])
 
-    fragments.append(X[(numFrag - 1) * frag_size:, :])
+def kmeans_frag(fragments, dimensions, num_centers, max_iterations, seed, epsilon, norm):
+    '''A fragment-based K-Means algorithm.
+    Given a set of fragments (which can be either PSCOs or future objects that
+    point to PSCOs), the desired number of clusters and the maximum number of
+    iterations, compute the optimal centres and the index of the centre
+    for each point.
+    PSCO.mat must be a NxD float np.matrix, where D = dimensions
+    '''
+    import numpy as np
 
-    return fragments
+    # Set the random seed
+    np.random.seed(seed)
+    # Centres is usually a very small matrix, so it is affordable to have it in
+    # the master.
+    centres = np.matrix(
+        [np.random.random(dimensions) for _ in range(num_centers)]
+    )
+    # Make a list of labels, treat it as INOUT
+    # Leave it empty at the beggining, update it inside the task. Avoid
+    # having a linear amount of stuff in master's memory unnecessarily
+    labels = [[] for _ in range(len(fragments))]
+    # Note: this implementation treats the centres as files, never as PSCOs.
+    for it in range(max_iterations):
+        print("Iteration: %s" % it)
+        partial_results = []
+        for (i, frag) in enumerate(fragments):
+            # For each fragment compute, for each point, the nearest centre.
+            # Return the mean sum of the coordinates assigned to each centre.
+            # Note that mean = mean ( sum of sub-means )
+            partial_result = cluster_and_partial_sums(frag, labels[i], centres, norm)
+            partial_results.append(partial_result)
+        # Bring the partial sums to the master, compute new centres when syncing
+        new_centres = np.matrix(np.zeros(centres.shape))
+        from pycompss.api.api import compss_wait_on
+        for partial in partial_results:
+            partial = compss_wait_on(partial)
+            # Mean of means, single step
+            new_centres += partial / float(len(fragments))
+        if np.linalg.norm(centres - new_centres, norm) < epsilon:
+            # Convergence criterion is met
+            print("Convergence is met")
+            break
+        # Convergence criterion is not met, update centres
+        centres = new_centres
+    # If we are here either we have converged or we have run out of iterations
+    # In any case, now it is time to update the labels in the master
+    ret_labels = []
+    for label_list in labels:
+        from pycompss.api.api import compss_wait_on
+        to_add = compss_wait_on(label_list)
+        ret_labels += to_add
+    return centres, ret_labels
 
 
-def kmeans_frag(X, num_frag, k, epsilon, maxIterations):
-    from pycompss.api.api import compss_wait_on
-    from pycompss.api.api import barrier
-    size = int(numV / numFrag)
-    seed = 5
-    startTime = time.time()
+'''This code is used for experimental purposes.
+I.e it generates random data from some parameters that determine the size,
+dimensionality and etc and returns the elapsed time.
+'''
 
-    X = partition_dataset(X, num_frag)
-    # barrier()
-    print("Points generation Time {} (s)".format(time.time() - startTime))
-    mu = init_random(dim, k, seed)
-    oldmu = []
-    n = 0
-    startTime = time.time()
 
-    while not has_converged(mu, oldmu, epsilon, n, maxIterations):
-        oldmu = mu
-        partialResult = []
-        # clusters = []
-        for f in xrange(numFrag):
-            # cluster = cluster_points_partial(X[f], mu, f * size)
-            # clusters.append(cluster)
-            # partialResult.append(partial_sum(X[f], cluster, f * size))
-            partialResult.append(cluster_points_sum(X[f], mu, f * size))
-        # clusters = [cluster_points_partial(
-        #    X[f], mu, f * size) for f in range(numFrag)]
-        # partialResult = [partial_sum(
-        #    X[f], clusters[f], f * size) for f in range(numFrag)]
+def main():
+    args = parse_arguments()
 
-        mu = mergeReduce(reduceCenters, partialResult, chunk=50)
-        mu = compss_wait_on(mu)
-        mu = [mu[c][1] / mu[c][0] for c in mu]
-        while len(mu) < k:
-            indP = np.random.randint(0, size)
-            indF = np.random.randint(0, numFrag)
-            mu.append(X[indF][indP])
-        n += 1
-        print("Iteration Time {} (s)".format(time.time() - startTime))
-    print("Kmeans Time {} (s)".format(time.time() - startTime))
+    print("Execution arguments:\n%s" % args)
+    t0 = time()
 
-    return (n, mu)
+    # Generate the data
+    fragment_list = []
+    # Prevent infinite loops in case of not-so-smart users
+    points_per_fragment = max(1, args.num_points // args.num_fragments)
+    for l in range(0, args.num_points, points_per_fragment):
+        # Note that the seed is different for each fragment. This is done to avoid
+        # having repeated data.
+        r = min(args.num_points, l + points_per_fragment)
+        fragment_list.append(
+            generate_fragment(r - l, args.dimensions, args.seed + l)
+        )
+    centers, labels = kmeans_frag(fragments=fragment_list,
+                                  dimensions=args.dimensions,
+                                  num_centers=args.num_centers,
+                                  max_iterations=args.max_iterations,
+                                  seed=args.seed,
+                                  epsilon=args.epsilon,
+                                  norm=args.lnorm)
+
+    t1 = time()
+    print("Total elapsed time: %s" % (t1 - t0))
 
 
 if __name__ == "__main__":
-    import sys
-    import time
-
-    numV = int(sys.argv[1])
-    dim = int(sys.argv[2])
-    k = int(sys.argv[3])
-    numFrag = int(sys.argv[4])
-    iterations = int(sys.argv[5])
-
-    startTime = time.time()
-    result = kmeans_frag(numV, k, dim, 1e-4, iterations, numFrag)
-    print("Elapsed Time {} (s)".format(time.time() - startTime))
+    main()
