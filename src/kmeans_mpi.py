@@ -157,8 +157,6 @@ def kmeans_mpi(matrix, dimensions, num_centers, max_iterations, seed, epsilon, n
     else:
         centers = np.zeros((num_centers, dimensions))
 
-    matrix = _scatter_samples(matrix)
-
     epsilon = epsilon
     comm.Bcast(centers, root=0)
 
@@ -199,7 +197,7 @@ def main():
         print("Execution arguments:\n%s" % args)
         t0 = time()
 
-    matrix = init_matrix(args.num_points, dimensions=args.dimensions, seed=args.seed)
+    matrix = init_matrix(num_points=args.num_points, dimensions=args.dimensions, seed=args.seed)
 
     kmeans_mpi(matrix=matrix,
                dimensions=args.dimensions,

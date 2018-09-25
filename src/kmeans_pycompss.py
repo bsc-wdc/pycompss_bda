@@ -45,7 +45,7 @@ def init_board_random(numV, dim, seed):
     return np.random.random((numV, dim))
 
 
-@task(returns=list)
+@task(returns=1)
 def generate_fragment(numv, dim, seed):
     return init_board_random(numv, dim, seed)
 
@@ -99,7 +99,7 @@ def kmeans_frag(fragments, dimensions, num_centers, max_iterations, seed, epsilo
         [np.random.random(dimensions) for _ in range(num_centers)]
     )
     # Make a list of labels, treat it as INOUT
-    # Leave it empty at the beggining, update it inside the task. Avoid
+    # Leave it empty at the beginning, update it inside the task. Avoid
     # having a linear amount of stuff in master's memory unnecessarily
     labels = [[] for _ in range(len(fragments))]
     # Note: this implementation treats the centres as files, never as PSCOs.
