@@ -36,8 +36,13 @@ mkdir -p "${workspace}${suffix}"
 DEST="${workspace}${suffix}"
 
 cd $DEST
-
+module purge
+module load intel/2017.4
+module load mkl/2018.2
+module load python/2.7.13
 module load COMPSs/2.3
+
+
   #--qos=debug \
 enqueue_compss \
   --tracing=${tracing} \
@@ -47,7 +52,7 @@ enqueue_compss \
   --num_nodes=${num_nodes} \
   --pythonpath=/home/bsc19/bsc19277/ \
   --worker_in_master_cpus=24 \
-  /home/bsc19/bsc19277/kmeans/kmeans.py $@
+  ${executable} $@
   
   #--worker_in_master_memory=50000 \
   #--worker_in_master_cpus=40 \
