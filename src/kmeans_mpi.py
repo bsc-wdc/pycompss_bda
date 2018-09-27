@@ -1,8 +1,7 @@
-import numpy as np
-
 from time import time
-from mpi4py import MPI
 
+import numpy as np
+from mpi4py import MPI
 from numpy import random as rng
 
 comm = MPI.COMM_WORLD

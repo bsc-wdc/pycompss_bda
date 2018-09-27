@@ -1,10 +1,8 @@
-import numpy as np
-
 from time import time
-from pycompss.api.task import task
+
+import numpy as np
 from pycompss.api.parameter import *
-
-
+from pycompss.api.task import task
 
 
 def parse_arguments():
@@ -60,12 +58,13 @@ def cluster_and_partial_sums(fragment, labels, centres, norm):
     ret = np.matrix(np.zeros(centres.shape))
     n = fragment.shape[0]
     c = centres.shape[0]
+
     # Check if labels is an empty list
-    if not labels:
-        # If it is, fill it with n zeros.
-        for _ in range(n):
-            # Done this way to not lose the reference
-            labels.append(0)
+    # if not labels:
+    #     # If it is, fill it with n zeros.
+    #     for _ in range(n):
+    #         # Done this way to not lose the reference
+    #         labels.append(0)
     # Compute the big stuff
     associates = np.zeros(c)
     # Get the labels for each point
