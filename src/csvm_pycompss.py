@@ -70,11 +70,12 @@ class CascadeSVM(object):
 
         partitions = self._read_dir(path, data_format, n_features)
 
-        barrier()
+        # Uncomment to measure read time
+        #barrier()
         self.read_time = time() - self.read_time
         self.fit_time = time()
 
-        self._do_fit(partitions)
+        self._cascade_fit(partitions)
 
         barrier()
 
@@ -110,7 +111,7 @@ class CascadeSVM(object):
         return partitions
 
     def _cascade_fit(self, partitions):
-        q = deque()
+        q = []
         feedback = None
 
         while self.iterations < self._max_iterations and not self.converged:
@@ -125,9 +126,10 @@ class CascadeSVM(object):
         # reduction
         while q:
             data = []
+            n_elements = min(self._cascade_arity, len(q))
 
-            while q and len(data) < self._cascade_arity:
-                data.append(q.popleft())
+            data = q[:n_elements]
+            del q[:n_elements]
 
             if q:
                 q.append(train(False, *data, **self._clf_params))
