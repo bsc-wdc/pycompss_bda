@@ -5,7 +5,7 @@ __author__ = 'p.glock'
 from mpi4py import MPI
 import numpy as np
 import logging
-from sklearn.svm import SVC, LinearSVC
+from sklearn.svm import SVC
 from inspect import isclass
 from functools import partial
 import argparse
@@ -22,10 +22,12 @@ debug = False
 extrae = False
 try:
     import pyextrae.mpi as pyextrae
+
     extrae = True
     print("pyextrae correctly loaded")
 except:
     print("pyextrae not available")
+
 
 def dist_filter(X, y, k, **kwargs):
     from scipy.spatial.distance import pdist, squareform
@@ -51,7 +53,6 @@ def dist_filter(X, y, k, **kwargs):
 
 
 def alpha_filter(X, y, k, alpha, **kwargs):
-
     unique_y = list(set(y))
     neg_X = X[y == unique_y[0]]
     pos_X = X[y == unique_y[1]]
@@ -62,7 +63,7 @@ def alpha_filter(X, y, k, alpha, **kwargs):
     na_sort = np.abs(neg_alpha).argsort()[:-1]
     pa_sort = np.abs(pos_alpha).argsort()[:-1]
 
-    res = np.vstack((neg_X[na_sort[:k], :],pos_X[pa_sort[:k], :]))
+    res = np.vstack((neg_X[na_sort[:k], :], pos_X[pa_sort[:k], :]))
     length = res.shape[0]
     labels = np.ones(length)
     n_length = na_sort[:k].shape[0]
@@ -194,7 +195,7 @@ class Cascade(object):
         base (class): base SVM classifier
     """
 
-    def __init__(self, base=SVC, timeit=True, **kwargs):
+    def __init__(self, base=SVC, **kwargs):
         self.levels = []
         self.bridges = []
         self.initialized = False
@@ -203,7 +204,6 @@ class Cascade(object):
         self.last_label = None
         self.lastW = None
         self.times = {"mpi": 0., "computation": 0.}
-        self.timeit = timeit
         self.feedback_filter = None
 
         if isclass(base):
@@ -222,19 +222,7 @@ class Cascade(object):
             None
         """
 
-        
-        #if self.timeit:
-        #    t0 = time.time()
         t0 = time.time()
-
-        # if world_comm.rank == 0:
-        #
-        # comb = np.concatenate((X, y.reshape((-1, 1))), axis=1)
-        # comb = unique(comb)
-        #     np.random.shuffle(comb)
-        #     X = comb[:, :-1].copy()
-        #     y = comb[:, -1].copy()
-        #     y = y.astype(int)
 
         if file_format == "libsvm":
             if world_comm.rank == 0:
@@ -247,10 +235,7 @@ class Cascade(object):
                 y = None
 
             self.levels[0].scatter_data(X, y)
-            if self.timeit:
-                t1 = time.time() - t0
-                #root_print("Initializing data by scattering: {s}s".format(s=t1))
-                self.times["mpi"] += t1
+
         elif file_format == "hdf5":
             from data import h5_pread
 
@@ -262,7 +247,7 @@ class Cascade(object):
 
         elif file_format == "csv":
             if world_comm.rank == 0:
-                #print('Numpy version {}'.format(np.version.version))
+                # print('Numpy version {}'.format(np.version.version))
                 data = np.loadtxt(filename, delimiter=',', dtype=float)
                 X = np.ascontiguousarray(data[:, :-2])
                 y = data[:, -1].astype('int')
@@ -271,14 +256,10 @@ class Cascade(object):
                 X = None
                 y = None
             self.levels[0].scatter_data(X, y)
-            if self.timeit:
-                t1 = time.time() - t0
-                self.times["mpi"] += t1
 
         t1 = time.time() - t0
         root_print("Initializing data by scattering: {s}s".format(s=t1))
         self.initialized = True
-
 
     def _check_converged(self, comm):
         if comm != MPI.COMM_NULL:
@@ -302,7 +283,8 @@ class Cascade(object):
                 if world_comm.rank == first_level.global_root:
                     if np.abs((max_W - self.lastW) / self.lastW) < 10 ** -3:
                         root_print((max_W - self.lastW) / self.lastW)
-                        root_print("Conv. values %s" % (root_print((max_W - self.lastW) / self.lastW)))
+                        root_print(
+                            "Conv. values %s" % (root_print((max_W - self.lastW) / self.lastW)))
                         conv = np.array(1)
                     else:
                         root_print(np.abs((max_W - self.lastW) / self.lastW))
@@ -317,7 +299,6 @@ class Cascade(object):
         else:
             return True
 
-
     def cascade_iteration(self, convergence_check):
         """ Performs one iteration of a cascadeSVM fit.
         Each level is trained and the resulting support vectors are transferred to the next level as input data.
@@ -329,18 +310,9 @@ class Cascade(object):
         while index < len(self.levels):
             lvl = self.levels[index]
             try:
-                # Timing
-                if self.timeit:
-                    t0 = time.time()
 
                 # train a level
                 lvl.fit(self.base)
-
-                # Timing
-                if self.timeit:
-                    t1 = time.time() - t0
-                    root_print("Fit level [{i}]: {s} s".format(i=index, s=t1))
-                    self.times["computation"] += t1
 
                 # do feedback if intended. If feedback is done 'feedback' is True else False
                 feedback = lvl.feedback(self.levels[0], self.feedback_filter)
@@ -357,15 +329,7 @@ class Cascade(object):
 
                 # send data to next level
                 if index < len(self.bridges):
-                    if self.timeit:
-                        t0 = time.time()
-
                     self.bridges[index].to_next(lvl, self.levels[index + 1])
-
-                    if self.timeit:
-                        t1 = time.time() - t0
-                        root_print("Sending data to next level[{i}]: {s} s".format(i=index + 1, s=t1))
-                        self.times["mpi"] += t1
 
                 # if no feedback has been done increase level by one
                 if not feedback:
@@ -386,7 +350,7 @@ class Cascade(object):
             for i in range(repeat):
                 root_print("***** Iteration {n} *****".format(n=i + 1))
                 self.cascade_iteration(convergence_check=True)
-                if i < repeat-1:
+                if i < repeat - 1:
                     self.broadcast_result()
         elif repeat == "converge":
             count = 1
@@ -412,21 +376,18 @@ class Cascade(object):
 
             return acc
 
-
     def broadcast_result(self):
         if world_comm.rank in self.levels[0].procs:
             last_level = self.levels[-1]
 
-            if self.timeit:
-                t0 = time.time()
-
-            self.levels[0].X, self.levels[0].y, self.last_supp, self.last_label = _combine_data(self.levels[0].baseX,
-                                                                                                last_level.support_vectors,
-                                                                                                self.levels[0].basey,
-                                                                                                last_level.support_labels,
-                                                                                                True, self.levels[
-                                                                                                    0].level_comm,
-                                                                                                self.levels[0].root)
+            self.levels[0].X, self.levels[0].y, self.last_supp, self.last_label = _combine_data(
+                self.levels[0].baseX,
+                last_level.support_vectors,
+                self.levels[0].basey,
+                last_level.support_labels,
+                True, self.levels[
+                    0].level_comm,
+                self.levels[0].root)
 
             if world_comm.rank in last_level.procs:
 
@@ -446,14 +407,8 @@ class Cascade(object):
 
             self.levels[0].level_comm.Bcast(self.lastW, root=self.levels[0].root)
 
-            if self.timeit:
-                t1 = time.time() - t0
-                root_print("Broadcasting results to first level: {s} s".format(s=t1))
-                self.times["computation"] += t1
-
         else:
             return None
-
 
     def save_model(self, f, root=0):
         """ Save the computed SVM.
@@ -512,8 +467,9 @@ class Cascade(object):
         return len(self.levels)
 
     def __str__(self):
-        printable = "Cascade SVM, number of levels: {l}, number of bridges: {b}\nLevels:\n".format(l=len(self.levels),
-                                                                                                   b=len(self.bridges))
+        printable = "Cascade SVM, number of levels: {l}, number of bridges: {b}\nLevels:\n".format(
+            l=len(self.levels),
+            b=len(self.bridges))
         for l in self.levels:
             printable += str(l) + "\n"
         return printable
@@ -572,12 +528,13 @@ class Level(object):
     def feedback(self, target_level, feedback_filter=None):
 
         if self.n_feedback < self.max_feedback:
-            root_print("##### Feedback from level {} to level {} #####".format(self.rank, target_level.rank))
+            root_print("##### Feedback from level {} to level {} #####".format(self.rank,
+                                                                               target_level.rank))
             self.n_feedback += 1
             for root in self.procs:
-                exclude_procs = []#range(root+1, root+2**self.rank)
-                #print("world_comm.size: {}".format(world_comm.size))
-                #print("target_level.level_comm.size: {}".format(target_level.level_comm.size))
+                exclude_procs = []  # range(root+1, root+2**self.rank)
+                # print("world_comm.size: {}".format(world_comm.size))
+                # print("target_level.level_comm.size: {}".format(target_level.level_comm.size))
                 if target_level.level_comm.size < world_comm.size:
                     exclude_procs.extend(range(target_level.level_comm.size, world_comm.size))
 
@@ -588,21 +545,25 @@ class Level(object):
                 # rank of the root in the new communicator
                 grp_root = MPI.Group.Translate_ranks(group, [root], new_group)[0]
 
-                #print("world root: {r}, group root: {g}".format(r=root,g=grp_root))
+                # print("world root: {r}, group root: {g}".format(r=root,g=grp_root))
 
                 if world_comm.rank == root:
                     if feedback_filter is None:
                         feed_X = self.support_vectors
                         feed_y = self.support_labels
                     else:
-                        feed_X, feed_y = feedback_filter(self.support_vectors, self.support_labels, alpha=self.model.dual_coef_.flatten())
+                        feed_X, feed_y = feedback_filter(self.support_vectors, self.support_labels,
+                                                         alpha=self.model.dual_coef_.flatten())
                 else:
                     feed_X = None
                     feed_y = None
 
                 if comm != MPI.COMM_NULL:
-                    #print("RANK {} GETS FEEDBACK".format(world_comm.rank))
-                    target_level.X, target_level.y = _combine_data(target_level.baseX, feed_X, target_level.basey, feed_y, comm=comm, root=grp_root, ret_last=False)
+                    # print("RANK {} GETS FEEDBACK".format(world_comm.rank))
+                    target_level.X, target_level.y = _combine_data(target_level.baseX, feed_X,
+                                                                   target_level.basey, feed_y,
+                                                                   comm=comm, root=grp_root,
+                                                                   ret_last=False)
 
             return True
         else:
@@ -628,12 +589,12 @@ class Level(object):
     def has_two_labels(self, y):
         return len(set(y)) == 2
 
-    def all_chunks_correctly_divided(self, x, y):
-        chunk_size = x.shape[0] / world_comm.size
-        chunk_number = x.shape[0] / chunk_size
-        for idx in range(int(chunk_number)):
-            start = idx*chunk_size
-            end = (idx+1)*chunk_size
+    def all_partitions_correctly_divided(self, x, y):
+        partition_size = x.shape[0] / world_comm.size
+        partition_number = x.shape[0] / partition_size
+        for idx in range(int(partition_number)):
+            start = idx * partition_size
+            end = (idx + 1) * partition_size
             if end > len(y):
                 end = len(y)
             if not self.has_two_labels(y[start:end]):
@@ -655,7 +616,7 @@ class Level(object):
         if world_comm.rank in self.procs:
             t0 = time.time()
             if world_comm.rank == 0:
-                while not self.all_chunks_correctly_divided(X, y):
+                while not self.all_partitions_correctly_divided(X, y):
                     import random
                     s = np.arange(X.shape[0])
                     random.shuffle(s)
@@ -681,7 +642,8 @@ class Level(object):
             if self.X is None or self.y is None:
                 raise Exception("Data not available")
 
-            self.support_vectors, self.support_labels, self.model = _mpi_train(base, self.X, self.y, ret="both")
+            self.support_vectors, self.support_labels, self.model = _mpi_train(base, self.X,
+                                                                               self.y, ret="both")
             # print("[{r}]:\n{v}".format(r=world_comm.rank,v=self.support_vectors))
             # print("[{r}]:\n{v}".format(r=world_comm.rank,v=self.X))
         else:
@@ -746,7 +708,6 @@ class BridgeElement(object):
         world_comm.Allgather(np.array(self.bridge_rank, dtype=np.int64), global_to_bridge)
         self.global_to_bridge = global_to_bridge
 
-
     @property
     def root(self):
         """ Transforms the global root to the bridge root.
@@ -767,7 +728,8 @@ class BridgeElement(object):
 
         """
         if world_comm.rank in self.procs:
-            new_X, new_y = _all_to_one(support_vectors=orig_X, support_labels=orig_y, comm=self.bridge_comm,
+            new_X, new_y = _all_to_one(support_vectors=orig_X, support_labels=orig_y,
+                                       comm=self.bridge_comm,
                                        root=self.root)
             return new_X, new_y
         else:
@@ -1077,7 +1039,8 @@ def _combine_data(old_X, new_X, old_y, new_y, ret_last=False, comm=world_comm, r
     total_y = np.concatenate((old_y, y), axis=0)
 
     if debug:
-        print("[%s] Old, new, and total sizes: %s, %s, %s", (comm.rank, old_X.size, new_X.size, total_X.size))
+        print("[%s] Old, new, and total sizes: %s, %s, %s",
+              (comm.rank, old_X.size, new_X.size, total_X.size))
     if ret_last:
         return total_X, total_y, new_X, new_y
     else:
@@ -1147,7 +1110,8 @@ def testing():
     from sklearn.cross_validation import train_test_split
     #
     data = load_iris()
-    data_train, data_test, target_train, target_test = train_test_split(data.data, data.target, test_size=0.33,
+    data_train, data_test, target_train, target_test = train_test_split(data.data, data.target,
+                                                                        test_size=0.33,
                                                                         random_state=7)  # random_state=7
     # clf = mpi_fit(data_train, target_train, n_loops=1)
     #
@@ -1197,10 +1161,13 @@ if __name__ == '__main__':
     # training
     parser_train = subparsers.add_parser("train", help="train a cascade svm on training data.")
     parser_train.add_argument("-C", type=float, default=1., help="C )value of the base SVM.")
-    parser_train.add_argument("-g", "--gamma", type=float, default=0.1, help="gamma value of the base SVM.")
-    parser_train.add_argument("-k", "--kernel", type=str, default="rbf", help="kernel used for the SVM classifier.")
+    parser_train.add_argument("-g", "--gamma", type=float, default=0.1,
+                              help="gamma value of the base SVM.")
+    parser_train.add_argument("-k", "--kernel", type=str, default="rbf",
+                              help="kernel used for the SVM classifier.")
     parser_train.add_argument("data", type=str, help="training samples.")
-    parser_train.add_argument("-s", "--save", type=str, help="save file for the calculated classifier.")
+    parser_train.add_argument("-s", "--save", type=str,
+                              help="save file for the calculated classifier.")
     parser_train.add_argument("--shuffle", action="store_true", help="shuffle training samples.")
     parser_train.add_argument("--score", type=str, help="test samples to calculate an accuracy.")
     parser_train.add_argument("-r", "--repeat", default=1, type=str,
@@ -1210,7 +1177,8 @@ if __name__ == '__main__':
                                    "(label should be first element).")
     # which file format is used?
     file_format = parser_train.add_mutually_exclusive_group()
-    file_format.add_argument("--libsvm", action="store_true", help="data is saved in libsvm format")
+    file_format.add_argument("--libsvm", action="store_true",
+                             help="data is saved in libsvm format")
     file_format.add_argument("--hdf5", action="store_true", help="data is saves in hdf5 format")
     file_format.add_argument("--csv", action="store_true", help="data is saves in hdf5 format")
 
@@ -1241,7 +1209,7 @@ if __name__ == '__main__':
 
         t1 = time.time()
         cascade.cascade_fit(repeat=repeat)
-        
+
         t2 = time.time() - t1
         t3 = time.time() - t0
         root_print("Cascade fit elapsed Time: {s}s".format(s=t2), should_print=True)

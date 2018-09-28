@@ -63,11 +63,6 @@ else
   echo "mpirun -np ${threads} \\" >> job
 fi
 
-echo "python ${baseDir}/../src/kmeans_mpi.py \
-    -n ${num_points} \
-    -d ${dimensions} \
-    -i ${iterations} \
-    -c ${centers} \
-    $@" >> job
+echo "python ${executable} $@" >> job
 
 sbatch job

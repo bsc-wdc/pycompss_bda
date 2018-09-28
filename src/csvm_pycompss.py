@@ -3,11 +3,12 @@ from __future__ import print_function
 import mmap
 import os
 from collections import deque
-from exceptions import AttributeError
 from itertools import islice
 from time import time
+from uuid import uuid4
 
 import numpy as np
+from exceptions import AttributeError
 from pycompss.api.api import compss_barrier as barrier
 from pycompss.api.api import compss_delete_object
 from pycompss.api.api import compss_wait_on
@@ -15,7 +16,6 @@ from pycompss.api.parameter import *
 from pycompss.api.task import task
 from sklearn.datasets import load_svmlight_file
 from sklearn.svm import SVC
-from uuid import uuid4
 
 
 class CascadeSVM(object):
@@ -32,14 +32,14 @@ class CascadeSVM(object):
 
         self._cascade_arity = 2
         self._max_iterations = 0
-        self._nchunks = 0
+        self._npartitions = 0
         self._tol = 0
         self._last_W = 0
         self._clf = None
         self._clf_params = None
         self._kernel_f = None
 
-    def fit(self, path=None, data_format="csv", n_features=None, cascade_arity=2, n_chunks=4,
+    def fit(self, path=None, data_format="csv", n_features=None, cascade_arity=2, n_partitions=4,
             cascade_iterations=5, tol=10 ** -3, C=1.0, kernel="rbf", gamma="auto"):
 
         try:
@@ -47,9 +47,11 @@ class CascadeSVM(object):
         except AttributeError:
             self._kernel_f = getattr(self, CascadeSVM.name_to_kernel["rbf"])
 
-        assert (gamma is "auto" or type(gamma) == float or type(float(gamma)) == float), "Gamma is not a valid float"
+        assert (gamma is "auto" or type(gamma) == float or type(
+            float(gamma)) == float), "Gamma is not a valid float"
         assert (kernel is None or kernel in self.name_to_kernel.keys()), \
-            "Incorrect kernel value [%s], available kernels are %s" % (kernel, self.name_to_kernel.keys())
+            "Incorrect kernel value [%s], available kernels are %s" % (
+            kernel, self.name_to_kernel.keys())
         assert (C is None or type(C) == float or type(float(C)) == float), \
             "Incorrect C type [%s], type : %s" % (C, type(C))
         assert cascade_arity > 1, "Cascade arity must be greater than 1"
@@ -57,7 +59,7 @@ class CascadeSVM(object):
 
         self._cascade_arity = cascade_arity
         self._max_iterations = cascade_iterations
-        self._nchunks = n_chunks
+        self._npartitions = n_partitions
         self._tol = tol
         self._last_W = 0
         self._clf = None
@@ -66,13 +68,13 @@ class CascadeSVM(object):
         self.read_time = time()
         self.total_time = time()
 
-        chunks = self._read_dir(path, data_format, n_features)
+        partitions = self._read_dir(path, data_format, n_features)
 
         barrier()
         self.read_time = time() - self.read_time
         self.fit_time = time()
 
-        self._do_fit(chunks)
+        self._do_fit(partitions)
 
         barrier()
 
@@ -97,48 +99,53 @@ class CascadeSVM(object):
         if self._clf_params["gamma"] == "auto":
             self._clf_params["gamma"] = 1. / n_features
 
-        self._nchunks = len(files)
+        self._npartitions = len(files)
 
-        chunks = []
+        partitions = []
 
         for f in files:
-            chunks.append(read_chunk(os.path.join(path, f), data_format=data_format, n_features=n_features))
+            partitions.append(
+                read_partition(os.path.join(path, f), data_format=data_format, n_features=n_features))
 
-        return chunks
+        return partitions
 
-    def _do_fit(self, chunks):
+    def _cascade_fit(self, partitions):
         q = deque()
         feedback = None
 
         while self.iterations < self._max_iterations and not self.converged:
+            feedback = self._cascade_iteration(partitions, feedback, q)
 
-            # first level
-            for chunk in chunks:
-                data = filter(None, [chunk, feedback])
+    def _cascade_iteration(self, partitions, feedback, q):
+        # first level
+        for partition in partitions:
+            data = filter(None, [partition, feedback])
+            q.append(train(False, *data, **self._clf_params))
+
+        # reduction
+        while q:
+            data = []
+
+            while q and len(data) < self._cascade_arity:
+                data.append(q.popleft())
+
+            if q:
                 q.append(train(False, *data, **self._clf_params))
+            else:
+                sv, sl, si, self._clf = compss_wait_on(train(True, *data, **self._clf_params))
 
-            # reduction
-            while q:
-                data = []
+            # delete partial results
+            for d in data:
+                compss_delete_object(d)
 
-                while q and len(data) < self._cascade_arity:
-                    data.append(q.popleft())
+        feedback = (sv, sl, si)
+        self.iterations += 1
 
-                if q:
-                    q.append(train(False, *data, **self._clf_params))
-                else:
-                    sv, sl, si, self._clf = compss_wait_on(train(True, *data, **self._clf_params))
+        self._check_convergence_and_update_w(feedback[0], feedback[1])
+        print("Iteration %s of %s. \n" % (
+            self.iterations, self._max_iterations))
 
-                # delete partial results
-                for d in data:
-                    compss_delete_object(d)
-
-            feedback = (sv, sl, si)
-            self.iterations += 1
-
-            self._check_convergence_and_update_w(feedback[0], feedback[1])
-            print("Iteration %s of %s. \n" % (
-                    self.iterations, self._max_iterations))
+        return feedback
 
     def _lagrangian_fast(self, SVs, sl, coef):
         set_sl = set(sl)
@@ -222,7 +229,7 @@ def train(return_classifier, *args, **kwargs):
 
 
 @task(filename=FILE, returns=tuple)
-def read_chunk(filename, data_format=None, n_features=None):
+def read_partition(filename, data_format=None, n_features=None):
     if data_format == "libsvm":
         X, y = load_svmlight_file(filename, n_features)
 
