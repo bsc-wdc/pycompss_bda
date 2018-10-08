@@ -54,7 +54,6 @@ def init_board_gauss(numV, dim, K, seed):
 def init_board_random(numV, dim, seed):
     np.random.seed(seed)
     return np.random.random((numV, dim))
-    #return [np.random.random(dim) for _ in range(numV)]
 
 
 def init_random(dim, k, seed):
@@ -80,23 +79,11 @@ def cluster_points_sum(XP, mu, ind):
             dic[bestmukey] = [x[0] + ind]
         else:
             dic[bestmukey].append(x[0] + ind)
-    return partial_sum(XP, dic, ind)
-
-def partial_sum(XP, clusters, ind):
-    """
-    For each cluster returns the number of points and the sum of all the
-    points that belong to the cluster.
-    :param XP: points
-    :param clusters: partial cluster {mu_ind: [pointInd_i, ..., pointInd_n]}
-    :param ind: point first ind
-    :return: {cluster_ind: (#points, sum(points))}
-    """
-    dic = {}
-    for i in clusters:
-        p_idx = np.array(clusters[i]) - ind
-        dic[i] = (len(p_idx), np.sum(XP[p_idx], axis=0))
-    return dic
-
+    clusters = {}
+    for i in dic:
+        p_idx = np.array(dic[i]) - ind 
+        clusters[i] = (len(p_idx), np.sum(XP[p_idx], axis=0))
+    return clusters
 
 def reduceCenters(a, b):
     """
