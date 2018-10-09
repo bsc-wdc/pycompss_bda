@@ -15,7 +15,8 @@ def parse_arguments():
     a help message in case of wrong usage.
     """
     import argparse
-    parser = argparse.ArgumentParser(description='An MPI Kmeans implementation.')
+    parser = argparse.ArgumentParser(
+        description='An MPI Kmeans implementation.')
     parser.add_argument('-s', '--seed', type=int, default=0,
                         help='Pseudo-random seed. Default = 0'
                         )
@@ -36,6 +37,9 @@ def parse_arguments():
                         )
     parser.add_argument('-l', '--lnorm', type=int, default=2, choices=[1, 2],
                         help='Norm for vectors'
+                        )
+    parser.add_argument('--distributed_read', action='store_true',
+                        help='Boolean indicating if data should be read distributed.'
                         )
 
     return parser.parse_args()
@@ -74,7 +78,8 @@ def _scatter_samples(X):
 
     # slices and pos for samples (2d has to be considered)
     data_slices = slices * n_features
-    data_pos = np.array([sum(data_slices[:i]) for i in range(comm.size)], dtype=np.float64)
+    data_pos = np.array([sum(data_slices[:i]) for i in range(comm.size)],
+                        dtype=np.float64)
 
     # number of rows for each process
     row_cnt = slices[comm.rank]
@@ -86,35 +91,7 @@ def _scatter_samples(X):
     return split_X
 
 
-def root_print(msg):
-    if rank == 0:
-        print(msg)
-
-
-def init_board_random(numV, dim, seed):
-    np.random.seed(seed)
-    return np.random.random((numV, dim))
-
-
-def has_converged(mu, oldmu, epsilon, iter, maxIterations):
-    print("iter: " + str(iter))
-    print("maxIterations: " + str(maxIterations))
-    if oldmu != []:
-        if iter < maxIterations:
-            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
-            distancia = sum(aux)
-            if distancia < epsilon * epsilon:
-                print("Distancia_T: " + str(distancia))
-                return True
-            else:
-                print("Distancia_F: " + str(distancia))
-                return False
-        else:
-            # max number of iterations reached
-            return True
-
-
-def init_matrix(num_points, dimensions, seed):
+def generate_fragment(num_points, dimensions, seed):
     if rank == 0:
 
         rng.seed(seed)
@@ -128,7 +105,39 @@ def init_matrix(num_points, dimensions, seed):
     return matrix
 
 
-def cluster_and_partial_sums(fragment, centers, norm):
+def init_board_random(numV, dim, seed):
+    np.random.seed(seed)
+    return np.random.random((numV, dim))
+
+
+def init_centers_random(dim, k, seed):
+    np.random.seed(seed)
+    m = np.random.random((k, dim))
+    return m
+
+def root_print(msg):
+    if rank == 0:
+        print(msg)
+
+def has_converged(mu, oldmu, epsilon, iter, maxIterations):
+    root_print("iter: " + str(iter))
+    root_print("maxIterations: " + str(maxIterations))
+    if oldmu != []:
+        if iter < maxIterations:
+            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
+            distancia = sum(aux)
+            if distancia < epsilon * epsilon:
+                root_print("Distancia_T: " + str(distancia))
+                return True
+            else:
+                root_print("Distancia_F: " + str(distancia))
+                return False
+        else:
+            root_print("Reached max number of iterations.")
+            return True
+
+
+def cluster_and_partial_sums(fragment, centers):
     partial_results = np.array(np.zeros(centers.shape))
     c = centers.shape[0]
     # Check if labels is an empty list
@@ -139,7 +148,7 @@ def cluster_and_partial_sums(fragment, centers, norm):
     for (i, point) in enumerate(fragment):
         distances = np.zeros(c)
         for (j, center) in enumerate(centers):
-            distances[j] = np.linalg.norm(point - center, norm)
+            distances[j] = np.linalg.norm(point - center)
         labels[i] = np.argmin(distances)
         associates[labels[i]] += 1
     # Add each point to its associate center
@@ -148,22 +157,34 @@ def cluster_and_partial_sums(fragment, centers, norm):
     return partial_results, labels
 
 
-def kmeans_mpi(matrix, dimensions, num_centers, max_iterations, seed, epsilon, norm):
-    if rank == 0:
-        rng.seed(seed)
-
-        centers = np.array([np.random.random(dimensions) for _ in range(num_centers)])
+def kmeans_mpi(num_points, dimensions, num_centers, max_iterations, seed,
+               epsilon, distributed_read):
+    if distributed_read:
+        matrix = init_board_random(num_points // size, dimensions, seed)
     else:
-        centers = np.zeros((num_centers, dimensions))
+        matrix = generate_fragment(num_points=num_points, dimensions=dimensions,
+                                   seed=seed)
+
+    if rank == 0:
+        new_centers = init_centers_random(dimensions, num_centers, seed)
+
+    else:
+        new_centers = np.zeros((num_centers, dimensions))
 
     epsilon = epsilon
-    comm.Bcast(centers, root=0)
+    comm.Bcast(new_centers, root=0)
+    centers = []
 
-    for it in range(max_iterations):
+    t0 = time()
+    it = 0
+    while not has_converged(new_centers, centers, epsilon, it, max_iterations):
+        centers = new_centers
 
-        root_print("Iteration: %s" % it)
+        if rank == 0:
+            print("Iteration: %s [%.2f] (s)" % (it, time() - t0))
+        t0 = time()
 
-        partial_results, labels = cluster_and_partial_sums(matrix, centers, norm)
+        partial_results, labels = cluster_and_partial_sums(matrix, centers)
         new_centers = np.array(np.zeros(centers.shape))
 
         partial_results = comm.gather(partial_results, root=0)
@@ -172,21 +193,12 @@ def kmeans_mpi(matrix, dimensions, num_centers, max_iterations, seed, epsilon, n
                 # Mean of means, single step
                 new_centers += partial / float(size)
         comm.Bcast(new_centers, root=0)
-        if np.linalg.norm(centers - new_centers, norm) < epsilon:
-            # Convergence criterion is met
-            labels = comm.gather(labels, root=0)
-            matrix = comm.gather(matrix, root=0)
-
-            if rank == 0:
-                print("Convergence is met")
-                labels = [l for sl in labels for l in sl]
-                matrix = [l for sl in matrix for l in sl]
-                # not used but pyCOMPSs transfers this back so it's fair to do it also in MPI.
-
-            break
+        if np.linalg.norm(centers - new_centers) < epsilon:
+            return new_centers
 
         # Convergence criterion is not met, update centers
-        centers = new_centers
+        # centers = new_centers
+        it += 1
 
 
 def main():
@@ -196,19 +208,17 @@ def main():
         print("Execution arguments:\n%s" % args)
         t0 = time()
 
-    matrix = init_matrix(num_points=args.num_points, dimensions=args.dimensions, seed=args.seed)
-
-    kmeans_mpi(matrix=matrix,
-               dimensions=args.dimensions,
-               num_centers=args.num_centers,
-               max_iterations=args.max_iterations,
-               seed=args.seed,
-               epsilon=args.epsilon,
-               norm=args.lnorm)
+    result = kmeans_mpi(num_points=args.num_points,
+                        dimensions=args.dimensions,
+                        num_centers=args.num_centers,
+                        max_iterations=args.max_iterations,
+                        seed=args.seed,
+                        epsilon=args.epsilon,
+                        distributed_read=args.distributed_read)
 
     if rank == 0:
         t1 = time()
-        print("Total elapsed time: %s" % (t1 - t0))
+        print("Total elapsed time: %s [points=%s]" % (t1 - t0, args.num_points))
 
 
 if __name__ == "__main__":
