@@ -45,6 +45,45 @@ def parse_arguments():
     return parser.parse_args()
 
 
+# Data generation functions
+
+def init_board_random(numV, dim, seed):
+    np.random.seed(seed)
+    return np.random.random((numV, dim))
+
+
+def init_centers_random(dim, k, seed):
+    np.random.seed(seed)
+    m = np.random.random((k, dim))
+    return m
+
+
+def generate_fragment(num_points, dimensions, seed):
+    if rank == 0:
+
+        rng.seed(seed)
+
+        matrix = init_board_random(num_points, dimensions, seed)
+    else:
+        matrix = None
+
+    matrix = _scatter_samples(matrix)
+
+    return matrix
+
+
+def generate_data(num_points, dimensions, seed,
+                  distributed_read):
+    if distributed_read:
+        X = init_board_random(num_points // size, dimensions, seed)
+    else:
+        X = generate_fragment(num_points=num_points, dimensions=dimensions,
+                              seed=seed)
+    return X
+
+
+# Auxiliar MPI functions
+
 def _calc_slices(X):
     """Calculate the slices of data for each process.
 
@@ -91,51 +130,12 @@ def _scatter_samples(X):
     return split_X
 
 
-def generate_fragment(num_points, dimensions, seed):
-    if rank == 0:
-
-        rng.seed(seed)
-
-        matrix = init_board_random(num_points, dimensions, seed)
-    else:
-        matrix = None
-
-    matrix = _scatter_samples(matrix)
-
-    return matrix
-
-
-def init_board_random(numV, dim, seed):
-    np.random.seed(seed)
-    return np.random.random((numV, dim))
-
-
-def init_centers_random(dim, k, seed):
-    np.random.seed(seed)
-    m = np.random.random((k, dim))
-    return m
-
 def root_print(msg):
     if rank == 0:
         print(msg)
 
-def has_converged(mu, oldmu, epsilon, iter, maxIterations):
-    root_print("iter: " + str(iter))
-    root_print("maxIterations: " + str(maxIterations))
-    if oldmu != []:
-        if iter < maxIterations:
-            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
-            distancia = sum(aux)
-            if distancia < epsilon * epsilon:
-                root_print("Distancia_T: " + str(distancia))
-                return True
-            else:
-                root_print("Distancia_F: " + str(distancia))
-                return False
-        else:
-            root_print("Reached max number of iterations.")
-            return True
 
+# Main implementation functions
 
 def cluster_and_partial_sums(fragment, centers):
     partial_results = np.array(np.zeros(centers.shape))
@@ -157,14 +157,26 @@ def cluster_and_partial_sums(fragment, centers):
     return partial_results, labels
 
 
-def kmeans_mpi(num_points, dimensions, num_centers, max_iterations, seed,
-               epsilon, distributed_read):
-    if distributed_read:
-        matrix = init_board_random(num_points // size, dimensions, seed)
-    else:
-        matrix = generate_fragment(num_points=num_points, dimensions=dimensions,
-                                   seed=seed)
+def has_converged(mu, oldmu, epsilon, iter, maxIterations):
+    root_print("iter: " + str(iter))
+    root_print("maxIterations: " + str(maxIterations))
+    if oldmu != []:
+        if iter < maxIterations:
+            aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
+            distancia = sum(aux)
+            if distancia < epsilon * epsilon:
+                root_print("Distancia_T: " + str(distancia))
+                return True
+            else:
+                root_print("Distancia_F: " + str(distancia))
+                return False
+        else:
+            root_print("Reached max number of iterations.")
+            return True
 
+
+def kmeans_mpi(X, dimensions, num_centers, max_iterations, seed,
+               epsilon):
     if rank == 0:
         new_centers = init_centers_random(dimensions, num_centers, seed)
 
@@ -184,7 +196,7 @@ def kmeans_mpi(num_points, dimensions, num_centers, max_iterations, seed,
             print("Iteration: %s [%.2f] (s)" % (it, time() - t0))
         t0 = time()
 
-        partial_results, labels = cluster_and_partial_sums(matrix, centers)
+        partial_results, labels = cluster_and_partial_sums(X, centers)
         new_centers = np.array(np.zeros(centers.shape))
 
         partial_results = comm.gather(partial_results, root=0)
@@ -208,13 +220,16 @@ def main():
         print("Execution arguments:\n%s" % args)
         t0 = time()
 
-    result = kmeans_mpi(num_points=args.num_points,
+    X = generate_data(num_points=args.num_points,
+                      dimensions=args.dimensions,
+                      seed=args.seed,
+                      distributed_read=args.distributed_read)
+    result = kmeans_mpi(X=X,
                         dimensions=args.dimensions,
                         num_centers=args.num_centers,
                         max_iterations=args.max_iterations,
                         seed=args.seed,
-                        epsilon=args.epsilon,
-                        distributed_read=args.distributed_read)
+                        epsilon=args.epsilon)
 
     if rank == 0:
         t1 = time()

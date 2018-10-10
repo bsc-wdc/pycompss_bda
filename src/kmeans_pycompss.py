@@ -19,8 +19,10 @@ __author__ = 'Ramon Amela <ramon.amela@bsc.es>'
 __copyright__ = '2018 Barcelona Supercomputing Center (BSC-CNS)'
 
 import time
+from collections import defaultdict
 
 import numpy as np
+from pycompss.api.api import compss_wait_on
 from pycompss.api.task import task
 
 
@@ -59,6 +61,42 @@ def parse_arguments():
     return parser.parse_args()
 
 
+# Data generation functions
+
+def init_board_random(num_points, dim, seed):
+    np.random.seed(seed)
+    return np.random.random((num_points, dim))
+
+
+def init_centers_random(dim, k, seed):
+    np.random.seed(seed)
+    m = np.random.random((k, dim))
+    return m
+
+
+@task(returns=list)
+def generate_fragment(numv, dim, seed):
+    return init_board_random(numv, dim, seed)
+
+
+def generate_data(num_points, num_fragments, dimensions, seed,
+                  distributed_read):
+    startTime = time.time()
+
+    size = int(num_points / num_fragments)
+
+    if distributed_read:
+        X = [generate_fragment(size, dimensions, seed + i) for i in
+             range(num_fragments)]
+    else:
+        X = [init_board_random(size, dimensions, seed + i) for i in
+             range(num_fragments)]
+    print("Points generation Time {} (s)".format(time.time() - startTime))
+
+    return X
+
+
+# PyCOMPSs auxiliar functions
 @task(returns=dict)
 def merge_reduce_task(*data):
     reduce_value = data[0]
@@ -68,24 +106,14 @@ def merge_reduce_task(*data):
 
 
 def merge_reduce(data, chunk=50):
-    while (len(data)) > 1:
+    while len(data) > 1:
         dataToReduce = data[:chunk]
         data = data[chunk:]
         data.append(merge_reduce_task(*dataToReduce))
     return data[0]
 
 
-def init_board_random(num_points, dim, seed):
-    np.random.seed(seed)
-    return np.random.random((num_points, dim))
-    # return [np.random.random(dim) for _ in range(num_points)]
-
-
-def init_centers_random(dim, k, seed):
-    np.random.seed(seed)
-    m = np.random.random((k, dim))
-    return m
-
+# Main implementation functions
 
 @task(returns=dict)
 def cluster_points_sum(XP, mu, ind):
@@ -96,14 +124,11 @@ def cluster_points_sum(XP, mu, ind):
     :param ind: point first index
     :return: {mu_ind: [pointInd_i, ..., pointInd_n]}
     """
-    dic = {}
+    dic = defaultdict(list)
     for x in enumerate(XP):
         bestmukey = min([(i[0], np.linalg.norm(x[1] - mu[i[0]]))
                          for i in enumerate(mu)], key=lambda t: t[1])[0]
-        if bestmukey not in dic:
-            dic[bestmukey] = [x[0] + ind]
-        else:
-            dic[bestmukey].append(x[0] + ind)
+        dic[bestmukey].append(x[0] + ind)
     return partial_sum(XP, dic, ind)
 
 
@@ -130,6 +155,7 @@ def reduce_centers(a, b):
     :param b: partial_sum {cluster_ind: (#points_b, sum(points_b))}
     :return: {cluster_ind: (#points_a+#points_b, sum(points_a+points_b))}
     """
+
     for key in b:
         if key not in a:
             a[key] = b[key]
@@ -156,25 +182,9 @@ def has_converged(mu, oldmu, epsilon, iter, max_iterations):
             return True
 
 
-@task(returns=list)
-def generate_fragment(numv, dim, seed):
-    return init_board_random(numv, dim, seed)
-
-
-def kmeans_frag(num_points, num_centers, dimensions, epsilon, max_iterations,
-                num_fragments, distributed_read):
-    from pycompss.api.api import compss_wait_on
+def kmeans_frag(X, num_points, num_centers, dimensions, epsilon, max_iterations,
+                num_fragments, seed):
     size = int(num_points / num_fragments)
-    seed = 5
-    startTime = time.time()
-    if distributed_read:
-        X = [generate_fragment(size, dimensions, seed + i) for i in
-             range(num_fragments)]
-    else:
-        X = [init_board_random(size, dimensions, seed + i) for i in
-             range(num_fragments)]
-
-    print("Points generation Time {} (s)".format(time.time() - startTime))
     mu = init_centers_random(dimensions, num_centers, seed)
     oldmu = []
     it = 0
@@ -207,13 +217,20 @@ def main():
     print("Execution arguments:\n%s" % args)
     t0 = time.time()
 
-    result = kmeans_frag(num_points=args.num_points,
+    X = generate_data(num_points=args.num_points,
+                      num_fragments=args.num_fragments,
+                      dimensions=args.dimensions,
+                      seed=args.seed,
+                      distributed_read=args.distributed_read)
+
+    result = kmeans_frag(X=X,
+                         num_points=args.num_points,
                          num_centers=args.num_centers,
                          dimensions=args.dimensions,
                          epsilon=args.epsilon,
                          max_iterations=args.max_iterations,
                          num_fragments=args.num_fragments,
-                         distributed_read=args.distributed_read)
+                         seed=args.seed)
 
     t1 = time.time()
     print("Total elapsed time: %s [points=%s]" % (t1 - t0, args.num_points))
