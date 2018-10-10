@@ -134,12 +134,9 @@ class CascadeSVM(object):
             if q:
                 q.append(train(False, *data, **self._clf_params))
             else:
-                sv, sl, si, self._clf = compss_wait_on(train(True, *data, **self._clf_params))
+                res = compss_wait_on(train(True, *data, **self._clf_params))
 
-            # delete partial results
-            for d in data:
-                compss_delete_object(d)
-
+        sv, sl, si, self._clf = res
         feedback = (sv, sl, si)
         self.iterations += 1
 
