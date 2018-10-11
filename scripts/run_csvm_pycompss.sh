@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Run locally sample execution with agaricus dataset
+# Run locally sample execution with a sample dataset
 cd ../src
 
 runcompss csvm_pycompss.py \
