@@ -111,32 +111,30 @@ class CascadeSVM(object):
         return partitions
 
     def _cascade_fit(self, partitions):
-        q = []
         feedback = None
 
         while self.iterations < self._max_iterations and not self.converged:
-            feedback = self._cascade_iteration(partitions, feedback, q)
+            feedback = self._cascade_iteration(partitions, feedback)
 
-    def _cascade_iteration(self, partitions, feedback, q):
-        # first level
+    def _cascade_iteration(self, partitions, feedback):
+        q = []
+
+        # first layer
         for partition in partitions:
             data = filter(None, [partition, feedback])
             q.append(train(False, *data, **self._clf_params))
 
         # reduction
-        while q:
-            data = []
-            n_elements = min(self._cascade_arity, len(q))
+        while len(q) > self._cascade_arity:
+            data = q[:self._cascade_arity]
+            del q[:self._cascade_arity]
 
-            data = q[:n_elements]
-            del q[:n_elements]
+            q.append(train(False, *data, **self._clf_params))
 
-            if q:
-                q.append(train(False, *data, **self._clf_params))
-            else:
-                res = compss_wait_on(train(True, *data, **self._clf_params))
+        # last layer
+        final = compss_wait_on(train(True, *q, **self._clf_params))
 
-        sv, sl, si, self._clf = res
+        sv, sl, si, self._clf = final
         feedback = (sv, sl, si)
         self.iterations += 1
 
