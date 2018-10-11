@@ -24,9 +24,8 @@ try:
     import pyextrae.mpi as pyextrae
 
     extrae = True
-    print("pyextrae correctly loaded")
 except:
-    print("pyextrae not available")
+    pass
 
 
 def dist_filter(X, y, k, **kwargs):
@@ -282,12 +281,8 @@ class Cascade(object):
 
                 if world_comm.rank == first_level.global_root:
                     if np.abs((max_W - self.lastW) / self.lastW) < 10 ** -3:
-                        root_print((max_W - self.lastW) / self.lastW)
-                        root_print(
-                            "Conv. values %s" % (root_print((max_W - self.lastW) / self.lastW)))
                         conv = np.array(1)
-                    else:
-                        root_print(np.abs((max_W - self.lastW) / self.lastW))
+                    root_print("Conv. values %s" % ((max_W - self.lastW) / self.lastW))
 
                 first_level.level_comm.Bcast(conv, root=first_level.root)
 
@@ -897,7 +892,6 @@ def _mpi_train(base, X, y, ret="data", **kwargs):
     # get the support vectors
     support_vectors = X[clf.support_, :]
     support_labels = y[clf.support_].astype(np.int64)
-    print("SVs after fit: %s" % support_vectors.shape[0])
     if extrae:
         pyextrae.event(8000025, support_vectors.shape[0])
         pyextrae.event(8000025, 0)
