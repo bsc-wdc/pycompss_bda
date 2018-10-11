@@ -1,3 +1,22 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+#  Copyright 2002-2015 Barcelona Supercomputing Center (www.bsc.es)
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+__copyright__ = '2018 Barcelona Supercomputing Center (BSC-CNS)'
+
 from time import time
 
 import numpy as np
@@ -139,6 +158,7 @@ def root_print(msg):
 
 def cluster_and_partial_sums(fragment, centers):
     partial_results = np.array(np.zeros(centers.shape))
+
     c = centers.shape[0]
     # Check if labels is an empty list
     labels = np.zeros(len(fragment), dtype=np.uint32)
@@ -158,8 +178,7 @@ def cluster_and_partial_sums(fragment, centers):
 
 
 def has_converged(mu, oldmu, epsilon, iter, maxIterations):
-    root_print("iter: " + str(iter))
-    root_print("maxIterations: " + str(maxIterations))
+    root_print("iter: %s\nmaxIterations: %s" % (iter, maxIterations))
     if oldmu != []:
         if iter < maxIterations:
             aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]

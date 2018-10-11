@@ -1,8 +1,24 @@
-from __future__ import print_function
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+#  Copyright 2002-2015 Barcelona Supercomputing Center (www.bsc.es)
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+__copyright__ = '2018 Barcelona Supercomputing Center (BSC-CNS)'
 
 import mmap
 import os
-from collections import deque
 from itertools import islice
 from time import time
 from uuid import uuid4
@@ -39,8 +55,10 @@ class CascadeSVM(object):
         self._clf_params = None
         self._kernel_f = None
 
-    def fit(self, path=None, data_format="csv", n_features=None, cascade_arity=2, n_partitions=4,
-            cascade_iterations=5, tol=10 ** -3, C=1.0, kernel="rbf", gamma="auto"):
+    def fit(self, path=None, data_format="csv", n_features=None,
+            cascade_arity=2, n_partitions=4,
+            cascade_iterations=5, tol=10 ** -3, C=1.0, kernel="rbf",
+            gamma="auto"):
 
         try:
             self._kernel_f = getattr(self, CascadeSVM.name_to_kernel[kernel])
@@ -51,7 +69,7 @@ class CascadeSVM(object):
             float(gamma)) == float), "Gamma is not a valid float"
         assert (kernel is None or kernel in self.name_to_kernel.keys()), \
             "Incorrect kernel value [%s], available kernels are %s" % (
-            kernel, self.name_to_kernel.keys())
+                kernel, self.name_to_kernel.keys())
         assert (C is None or type(C) == float or type(float(C)) == float), \
             "Incorrect C type [%s], type : %s" % (C, type(C))
         assert cascade_arity > 1, "Cascade arity must be greater than 1"
@@ -68,10 +86,12 @@ class CascadeSVM(object):
         self.read_time = time()
         self.total_time = time()
 
+        if data_format == "libsvm":
+            assert n_features > 0, "Number of features is required when using libsvm format"
         partitions = self._read_dir(path, data_format, n_features)
 
         # Uncomment to measure read time
-        #barrier()
+        # barrier()
         self.read_time = time() - self.read_time
         self.fit_time = time()
 
@@ -87,14 +107,13 @@ class CascadeSVM(object):
         if self._clf:
             return self._clf.score(X, y)
         else:
-            raise Exception("Model %s has not been initialized. Try calling fit first." % i)
+            raise Exception(
+                "Model %s has not been initialized. Try calling fit first.")
 
     def _read_dir(self, path, data_format, n_features):
         files = os.listdir(path)
 
-        if data_format == "libsvm":
-            assert n_features > 0, "Number of features is required when using libsvm format"
-        elif not n_features:
+        if not n_features:
             n_features = self._count_features(os.path.join(path, files[0]))
 
         if self._clf_params["gamma"] == "auto":
@@ -105,8 +124,8 @@ class CascadeSVM(object):
         partitions = []
 
         for f in files:
-            partitions.append(
-                read_partition(os.path.join(path, f), data_format=data_format, n_features=n_features))
+            partitions.append(read_partition(os.path.join(path, f), data_format=data_format,
+                               n_features=n_features))
 
         return partitions
 
@@ -177,7 +196,7 @@ class CascadeSVM(object):
 
         if clf:
             W = self._lagrangian_fast(sv, sl, clf.dual_coef_)
-            print("     Computed W %s" % W)
+            print("\tComputed W %s" % W)
 
             if self._last_W:
                 delta = np.abs((W - self._last_W) / self._last_W)
@@ -185,9 +204,9 @@ class CascadeSVM(object):
                     print("     Converged with delta: %s " % delta)
                     self.converged = True
                 else:
-                    print("     No convergence with delta: %s " % delta)
+                    print("\tNo convergence with delta: %s " % delta)
             else:
-                print("     First iteration, not testing convergence.")
+                print("\tFirst iteration, not testing convergence.")
             self._last_W = W
             print()
 
@@ -237,7 +256,7 @@ def read_partition(filename, data_format=None, n_features=None):
 
         X, y = vecs[:, :-1], vecs[:, -1]
 
-    idx = np.array([uuid4().int for _ in xrange(X.shape[0])])
+    idx = np.array([uuid4().int for _ in range(X.shape[0])])
 
     return X, y, idx
 

@@ -15,11 +15,9 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-__author__ = 'Ramon Amela <ramon.amela@bsc.es>'
 __copyright__ = '2018 Barcelona Supercomputing Center (BSC-CNS)'
 
 import time
-from collections import defaultdict
 
 import numpy as np
 from pycompss.api.api import compss_wait_on
@@ -100,7 +98,7 @@ def generate_data(num_points, num_fragments, dimensions, seed,
 @task(returns=dict)
 def merge_reduce_task(*data):
     reduce_value = data[0]
-    for i in xrange(1, len(data)):
+    for i in range(1, len(data)):
         reduce_value = reduce_centers(reduce_value, data[i])
     return reduce_value
 
@@ -116,27 +114,27 @@ def merge_reduce(data, chunk=50):
 # Main implementation functions
 
 @task(returns=dict)
-def cluster_points_sum(XP, mu, ind):
+def cluster_points_sum(fragment_points, centers, ind):
     """
     For each point computes the nearest center.
-    :param XP: Fragments of points
-    :param mu: Centers
-    :param ind: point first index
-    :return: {mu_ind: [pointInd_i, ..., pointInd_n]}
+    :param fragment_points: list of points of a fragment
+    :param centers: current centers
+    :param ind: original index of the first point in the fragment
+    :return: {centers_ind: [pointInd_i, ..., pointInd_n]}
     """
-    dic = defaultdict(list)
-    for x in enumerate(XP):
-        bestmukey = min([(i[0], np.linalg.norm(x[1] - mu[i[0]]))
-                         for i in enumerate(mu)], key=lambda t: t[1])[0]
-        dic[bestmukey].append(x[0] + ind)
-    return partial_sum(XP, dic, ind)
+    center2points = {c: [] for c in range(0, len(centers))}
+    for x in enumerate(fragment_points):
+        closest_center = min([(i[0], np.linalg.norm(x[1] - centers[i[0]]))
+                              for i in enumerate(centers)], key=lambda t: t[1])[0]
+        center2points[closest_center].append(x[0] + ind)
+    return partial_sum(fragment_points, center2points, ind)
 
 
-def partial_sum(XP, clusters, ind):
+def partial_sum(fragment_points, clusters, ind):
     """
     For each cluster returns the number of points and the sum of all the
     points that belong to the cluster.
-    :param XP: points
+    :param fragment_points: points
     :param clusters: partial cluster {mu_ind: [pointInd_i, ..., pointInd_n]}
     :param ind: point first ind
     :return: {cluster_ind: (#points, sum(points))}
@@ -144,7 +142,7 @@ def partial_sum(XP, clusters, ind):
     dic = {}
     for i in clusters:
         p_idx = np.array(clusters[i]) - ind
-        dic[i] = (len(p_idx), np.sum(XP[p_idx], axis=0))
+        dic[i] = (len(p_idx), np.sum(fragment_points[p_idx], axis=0))
     return dic
 
 
@@ -165,20 +163,15 @@ def reduce_centers(a, b):
 
 
 def has_converged(mu, oldmu, epsilon, iter, max_iterations):
-    print("iter: " + str(iter))
-    print("max_iterations: " + str(max_iterations))
     if oldmu != []:
         if iter < max_iterations:
             aux = [np.linalg.norm(oldmu[i] - mu[i]) for i in range(len(mu))]
             distancia = sum(aux)
             if distancia < epsilon * epsilon:
-                print("Distancia_T: " + str(distancia))
                 return True
             else:
-                print("Distancia_F: " + str(distancia))
                 return False
         else:
-            print("Reached max number of iterations.")
             return True
 
 
@@ -194,16 +187,13 @@ def kmeans_frag(X, num_points, num_centers, dimensions, epsilon, max_iterations,
         oldmu = mu
         partialResult = []
         # clusters = []
-        for f in xrange(num_fragments):
+        for f in range(num_fragments):
             partialResult.append(cluster_points_sum(X[f], mu, f * size))
 
         mu = merge_reduce(partialResult, chunk=50)
         mu = compss_wait_on(mu)
         mu = [mu[c][1] / mu[c][0] for c in mu]
-        while len(mu) < num_centers:
-            indP = np.random.randint(0, size)
-            indF = np.random.randint(0, num_fragments)
-            mu.append(X[indF][indP])
+
         it += 1
         print("Iteration Time {} (s)".format(time.time() - startTime))
     print("Kmeans Time {} (s)".format(time.time() - startTime))
