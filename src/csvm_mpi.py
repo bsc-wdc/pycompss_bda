@@ -1106,31 +1106,7 @@ def testing():
     data = load_iris()
     data_train, data_test, target_train, target_test = train_test_split(data.data, data.target,
                                                                         test_size=0.33,
-                                                                        random_state=7)  # random_state=7
-    # clf = mpi_fit(data_train, target_train, n_loops=1)
-    #
-    # if world_comm.rank == 0:
-    # acc = clf.score(data_test, target_test)
-    # print("Accuracy: %f") % acc
-    # print("number of support vectors: %d") % len(clf.support_)
-    #
-    # top = Level([0, 1])
-    # bottom = Level([0])
-    # bridgeE = BridgeElement([0, 1], 0)
-    # bridge = Bridge()
-    # bridge.add(bridgeE)
-    #
-    # if world_comm.rank in [0, 1]:
-    # top.scatter_data(data_train, target_train)
-    # top.fit()
-    # # bottom.X,bottom.y = bridgeE.to_next(top.support_vectors,top.support_labels)
-    # bridge.to_next(top, bottom)
-    # bottom.fit()
-    #
-    # if world_comm.rank == 0:
-    # acc = bottom.score(data_test,target_test)
-    # print("Accuracy: %f") % acc
-    # print("number of support vectors: %d") % len(bottom.support_vectors)
+                                                                        random_state=7)
 
     csvm = create_binary_cascade(C=10, base=SVC)
     csvm.init_data(data_train, target_train)
@@ -1145,7 +1121,7 @@ def testing():
         print("number of support vectors: {vec}".format(vec=len(csvm.levels[-1].support_vectors)))
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", help="sub-command help")
 
@@ -1229,3 +1205,7 @@ if __name__ == '__main__':
                 clf = pickle.load(f)
 
             print(clf.score(X, y))
+
+
+if __name__ == '__main__':
+    main()

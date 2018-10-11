@@ -86,9 +86,14 @@ class CascadeSVM(object):
         self.read_time = time()
         self.total_time = time()
 
-        if data_format == "libsvm":
-            assert n_features > 0, "Number of features is required when using libsvm format"
-        partitions = self._read_dir(path, data_format, n_features)
+        # if data_format == "libsvm":
+        assert n_features > 0 or data_format != "libsvm" # "Number of features is required when using libsvm format"
+        files = os.listdir(path)
+
+        if not n_features:
+            n_features = self._count_features(os.path.join(path, files[0]))
+
+        partitions = self._read_dir(files, path, data_format, n_features)
 
         # Uncomment to measure read time
         # barrier()
@@ -110,11 +115,7 @@ class CascadeSVM(object):
             raise Exception(
                 "Model %s has not been initialized. Try calling fit first.")
 
-    def _read_dir(self, path, data_format, n_features):
-        files = os.listdir(path)
-
-        if not n_features:
-            n_features = self._count_features(os.path.join(path, files[0]))
+    def _read_dir(self, files, path, data_format, n_features):
 
         if self._clf_params["gamma"] == "auto":
             self._clf_params["gamma"] = 1. / n_features
@@ -262,12 +263,129 @@ def read_partition(filename, data_format=None, n_features=None):
 
 
 def merge(*args):
-    sv = np.concatenate([t[0] for t in args])
-    sl = np.concatenate([t[1] for t in args])
-    si = np.concatenate([t[2] for t in args])
+    sv = np.concatenate(zip(*args)[0])
+    sl = np.concatenate(zip(*args)[1])
+    si = np.concatenate(zip(*args)[2])
 
     si, uniques = np.unique(si, return_index=True)
     sv = sv[uniques]
     sl = sl[uniques]
 
     return sv, sl, si
+
+
+import argparse
+import numpy as np
+# from csvm_pycompss import CascadeSVM
+import csv
+import os
+from sklearn.datasets import load_svmlight_file
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-cr", "--centralized_read",
+                        help="read the whole CSV file at the master",
+                        action="store_true")
+    parser.add_argument("--libsvm", help="read files in libsvm format",
+                        action="store_true")
+    parser.add_argument("-dt", "--detailed_times",
+                        help="get detailed execution times (read and fit)",
+                        action="store_true")
+    parser.add_argument("-k", metavar="KERNEL", type=str,
+                        help="linear or rbf (default is rbf)",
+                        choices=["linear", "rbf"], default="rbf")
+    parser.add_argument("-a", metavar="CASCADE_ARITY", type=int,
+                        help="default is 2", default=2)
+    parser.add_argument("-n", metavar="N_CHUNKS", type=int,
+                        help="number of chunks in which to divide the dataset (default is 4)",
+                        default=4)
+    parser.add_argument("-i", metavar="MAX_ITERATIONS", type=int,
+                        help="default is 5", default=5)
+    parser.add_argument("-g", metavar="GAMMA", type=float,
+                        help="(only for rbf kernel) default is 1 / n_features",
+                        default=None)
+    parser.add_argument("-c", metavar="C", type=float, help="default is 1",
+                        default=1)
+    parser.add_argument("-f", metavar="N_FEATURES", type=int,
+                        help="mandatory if --libsvm option is used and train_data is a directory (optional otherwise)",
+                        default=None)
+    parser.add_argument("-t", metavar="TEST_FILE_PATH",
+                        help="test CSV file path", type=str, required=False)
+    parser.add_argument("-o", metavar="OUTPUT_FILE_PATH",
+                        help="output file path", type=str, required=False)
+    parser.add_argument("-nd", metavar="N_DATASETS", type=int,
+                        help="number of times to load the dataset", default=1)
+    parser.add_argument("--convergence", help="check for convergence",
+                        action="store_true")
+    parser.add_argument("--dense", help="use dense data structures",
+                        action="store_true")
+    parser.add_argument("train_data",
+                        help="CSV file or directory containing CSV files (if a directory is provided N_CHUNKS is ignored)",
+                        type=str)
+    args = parser.parse_args()
+
+    train_data = args.train_data
+
+    csvm = CascadeSVM()
+
+    if not args.g:
+        gamma = "auto"
+    else:
+        gamma = args.g
+
+    if args.centralized_read:
+        if args.libsvm:
+            x, y = load_svmlight_file(train_data)
+        else:
+            train = np.loadtxt(train_data, delimiter=",", dtype=float)
+
+            x = train[:, :-1]
+            y = train[:, -1]
+
+        for _ in range(args.nd):
+            csvm.load_data(X=x, y=y, kernel=args.k, C=args.c,
+                           cascade_arity=args.a, n_chunks=args.n, gamma=gamma,
+                           cascade_iterations=args.i, force_dense=args.dense)
+
+    elif args.libsvm:
+        csvm.fit(path=train_data, data_format="libsvm", n_features=args.f,
+                 kernel=args.k, C=args.c,
+                 cascade_arity=args.a, n_partitions=args.n, gamma=gamma,
+                 cascade_iterations=args.i)
+
+    else:
+        csvm.fit(path=train_data, n_features=args.f, kernel=args.k, C=args.c,
+                 cascade_arity=args.a,
+                 n_partitions=args.n, gamma=gamma, cascade_iterations=args.i)
+
+    out = [args.k, args.a, args.n, csvm._clf_params["gamma"], args.c,
+           csvm.iterations, csvm.converged,
+           csvm.read_time, csvm.fit_time, csvm.total_time]
+
+    if os.path.isdir(train_data):
+        n_files = os.listdir(train_data)
+        out.append(len(n_files))
+
+    if args.t:
+        if args.libsvm:
+            testx, testy = load_svmlight_file(args.t, args.f)
+
+            if args.dense:
+                testx = testx.toarray()
+
+            out.append(csvm.score(testx, testy))
+        else:
+            test = np.loadtxt(args.t, delimiter=",", dtype=float)
+            out.append(csvm.score(test[:, :-1], test[:, -1]))
+
+    if args.o:
+        with open(args.o, "ab") as f:
+            wr = csv.writer(f)
+            wr.writerow(out)
+    else:
+        print(out)
+
+
+if __name__ == "__main__":
+    main()

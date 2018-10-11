@@ -3,7 +3,7 @@
 # Parameter's check
 if [ "$#" -lt 1 ]; then
     echo "Usage: ./$(basename $0) threads [csvm_args]"
-    echo "csvm_args: $(python csvm_mpi.py -h) "
+    echo "csvm_args: $(python ../src/csvm_mpi.py -h) "
     echo "Short demo: ./$(basename $0) 4"
     exit 1
 fi
