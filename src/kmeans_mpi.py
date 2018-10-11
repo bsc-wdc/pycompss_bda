@@ -103,6 +103,7 @@ def generate_data(num_points, dimensions, seed,
 
 # Auxiliar MPI functions
 
+
 def _calc_slices(X):
     """Calculate the slices of data for each process.
 
@@ -174,6 +175,7 @@ def cluster_and_partial_sums(fragment, centers):
     # Add each point to its associate center
     for (i, point) in enumerate(fragment):
         partial_results[labels[i]] += point / associates[labels[i]]
+
     return partial_results, labels
 
 
@@ -209,6 +211,8 @@ def kmeans_mpi(X, dimensions, num_centers, max_iterations, seed,
     t0 = time()
     it = 0
     while not has_converged(new_centers, centers, epsilon, it, max_iterations):
+        # Convergence criterion is not met (or it's first iteration), update centers
+
         centers = new_centers
 
         if rank == 0:
@@ -216,19 +220,14 @@ def kmeans_mpi(X, dimensions, num_centers, max_iterations, seed,
         t0 = time()
 
         partial_results, labels = cluster_and_partial_sums(X, centers)
-        new_centers = np.array(np.zeros(centers.shape))
 
-        partial_results = comm.gather(partial_results, root=0)
-        if rank == 0:
-            for partial in partial_results:
-                # Mean of means, single step
-                new_centers += partial / float(size)
-        comm.Bcast(new_centers, root=0)
+        centers_sum = comm.allreduce(partial_results, op=MPI.SUM)
+
+        new_centers = centers_sum / size
+
         if np.linalg.norm(centers - new_centers) < epsilon:
             return new_centers
 
-        # Convergence criterion is not met, update centers
-        # centers = new_centers
         it += 1
 
 

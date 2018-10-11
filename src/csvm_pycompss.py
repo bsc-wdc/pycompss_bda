@@ -17,6 +17,8 @@
 #
 __copyright__ = '2018 Barcelona Supercomputing Center (BSC-CNS)'
 
+import argparse
+import csv
 import mmap
 import os
 from itertools import islice
@@ -26,7 +28,6 @@ from uuid import uuid4
 import numpy as np
 from exceptions import AttributeError
 from pycompss.api.api import compss_barrier as barrier
-from pycompss.api.api import compss_delete_object
 from pycompss.api.api import compss_wait_on
 from pycompss.api.parameter import *
 from pycompss.api.task import task
@@ -87,7 +88,7 @@ class CascadeSVM(object):
         self.total_time = time()
 
         # if data_format == "libsvm":
-        assert n_features > 0 or data_format != "libsvm" # "Number of features is required when using libsvm format"
+        assert n_features > 0 or data_format != "libsvm"  # "Number of features is required when using libsvm format"
         files = os.listdir(path)
 
         if not n_features:
@@ -125,7 +126,8 @@ class CascadeSVM(object):
         partitions = []
 
         for f in files:
-            partitions.append(read_partition(os.path.join(path, f), data_format=data_format,
+            partitions.append(
+                read_partition(os.path.join(path, f), data_format=data_format,
                                n_features=n_features))
 
         return partitions
@@ -272,14 +274,6 @@ def merge(*args):
     sl = sl[uniques]
 
     return sv, sl, si
-
-
-import argparse
-import numpy as np
-# from csvm_pycompss import CascadeSVM
-import csv
-import os
-from sklearn.datasets import load_svmlight_file
 
 
 def main():
